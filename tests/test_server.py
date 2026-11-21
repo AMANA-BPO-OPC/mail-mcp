@@ -242,6 +242,7 @@ async def main():
         check("admin POST without session refused", r.status_code == 403)
         r = await c.post("/admin/login", data={"password": ADMIN_PW})
         check("admin login sets cookie", r.status_code == 303 and "admin_session" in r.cookies)
+        check("admin cookie is SameSite=Lax (survives Google redirect)", "samesite=lax" in r.headers["set-cookie"].lower())
         r = await c.get("/admin")
         check("admin lists accounts", "a@wolfpack.test" in r.text)
         r = await c.post("/admin/accounts/update", data={"email": "a@wolfpack.test", "label": "ولف باك", "display_name": "Wolfpack"},

@@ -295,7 +295,7 @@ async def admin_login(request: Request):
     exp = str(int(time.time()) + 3600)
     resp = RedirectResponse("/admin", status_code=303)
     resp.set_cookie("admin_session", f"{exp}.{_sign(exp)}", max_age=3600, httponly=True,
-                    secure=P.startswith("https"), samesite="strict")
+                    secure=P.startswith("https"), samesite="lax")
     return resp
 
 
