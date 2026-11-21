@@ -58,7 +58,7 @@ def _same_origin(request: Request) -> bool:
 SEC_HEADERS = {
     "X-Frame-Options": "DENY",
     "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https:; frame-ancestors 'none'",
-    "Referrer-Policy": "no-referrer",
+    "Referrer-Policy": "same-origin",
     "Cache-Control": "no-store",
 }
 
