@@ -1,10 +1,10 @@
 """MCP tools exposed to Claude."""
 import asyncio
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Image
 from mcp.server.transport_security import TransportSecuritySettings
 
-from . import config, gmail, store
+from . import attachments, config, gmail, store
 
 INSTRUCTIONS = (
     "Access to several of the owner's Gmail / Google Workspace mailboxes. "
@@ -75,6 +75,19 @@ async def read_email_thread(account: str, thread_id: str) -> dict:
     Use the threadId returned by search_emails, with the same account."""
     acc = _resolve(account)
     return await gmail.read_thread(acc["email"], thread_id)
+
+
+@mcp.tool()
+async def read_email_attachment(account: str, message_id: str, filename: str | None = None) -> list:
+    """Open an attachment and return its content: text for PDF, Word (docx), Excel
+    (xlsx/xls/csv), PowerPoint (pptx), text/HTML/JSON; images (jpg/png/webp/heic, and
+    scanned PDF pages) are returned as pictures to look at; ZIP files are listed and
+    their files read. message_id and the attachment filename come from
+    read_email_thread for the same account. filename may be omitted if there is only one."""
+    acc = _resolve(account)
+    meta, raw = await gmail.get_attachment(acc["email"], message_id, filename)
+    text, images = attachments.to_result(meta["filename"], meta["mimeType"], meta["size"], raw)
+    return [text] + [Image(data=img, format="jpeg") for img in images]
 
 
 @mcp.tool()

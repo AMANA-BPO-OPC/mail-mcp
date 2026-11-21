@@ -58,6 +58,14 @@ def fake_gmail(request: httpx.Request) -> httpx.Response:
     path = request.url.path.split("/users/me")[1]
     if path == "/messages" and request.method == "GET":
         return httpx.Response(200, json={"messages": [{"id": k} for k in box]})
+    if "/attachments/" in path:
+        import pymupdf
+        doc = pymupdf.open(); doc.new_page().insert_text((72, 72), "Total due 4,250 USD")
+        return httpx.Response(200, json={"data": base64.urlsafe_b64encode(doc.tobytes()).decode()})
+    if path.startswith("/messages/") and request.method == "GET" and "format=full" in url:
+        return httpx.Response(200, json={"id": "m2", "threadId": "t2", "payload": {"mimeType": "multipart/mixed",
+            "headers": [], "parts": [{"mimeType": "text/plain", "body": {"data": _b64("hi")}},
+            {"mimeType": "application/pdf", "filename": "inv.pdf", "body": {"size": 900, "attachmentId": "ATT1"}}]}})
     if path.startswith("/messages/") and request.method == "GET":
         mid = path.split("/")[-1]
         tid, frm, to, subj, body = box[mid]
@@ -194,7 +202,7 @@ async def main():
         r = await rpc("tools/list")
         names = sorted(t["name"] for t in r.json()["result"]["tools"])
         print("   tools:", names)
-        check("tools listed", len(names) == 6)
+        check("tools listed", len(names) == 7)
 
         async def call(name, args):
             r = await rpc("tools/call", {"name": name, "arguments": args})
@@ -216,6 +224,11 @@ async def main():
         d = json.loads(txt)
         check("read thread html->text + attachments", "Invoice attached" in d["messages"][0]["body"]
               and d["messages"][0]["attachments"][0]["filename"] == "inv.pdf")
+
+        r = await rpc("tools/call", {"name": "read_email_attachment",
+                                     "arguments": {"account": "مكشاتي", "message_id": "m2"}})
+        content = r.json()["result"]["content"]
+        check("read attachment via MCP (pdf text)", "Total due 4,250 USD" in content[0]["text"])
 
         res, txt = await call("send_email", {"account": "مكشاتي", "to": ["c@x.test"], "subject": "مرحبا",
                                              "body": "نص الرسالة"})

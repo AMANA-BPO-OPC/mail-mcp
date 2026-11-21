@@ -104,6 +104,7 @@ def _walk(part: dict, texts: list, htmls: list, attachments: list) -> None:
     if part.get("filename"):
         attachments.append({
             "filename": part["filename"], "mimeType": mime, "size": body.get("size", 0),
+            "attachmentId": body.get("attachmentId"), "_data": body.get("data"),
         })
     elif mime == "text/plain" and body.get("data"):
         texts.append(_b64(body["data"]))
@@ -133,7 +134,8 @@ def _summarize(msg: dict, full: bool) -> dict:
         if len(body) > MAX_BODY_CHARS:
             body = body[:MAX_BODY_CHARS] + "\n...[truncated]"
         out["body"] = body
-        out["attachments"] = atts
+        out["attachments"] = [{k: v for k, v in a.items() if not k.startswith("_") and k != "attachmentId"}
+                              for a in atts]
     return out
 
 
@@ -224,3 +226,30 @@ async def reply(email, display_name, message_id, body, html_body, reply_all,
     m = await _call(email, "POST", "/messages/send", json=payload)
     return {"messageId": m.get("id"), "threadId": m.get("threadId"), "to": to, "cc": cc,
             "subject": subject}
+
+
+async def get_attachment(email: str, message_id: str, filename: str | None) -> tuple[dict, bytes]:
+    """Find an attachment on a message by filename (or the only one) and return (meta, bytes)."""
+    msg = await _call(email, "GET", f"/messages/{message_id}", params={"format": "full"})
+    texts, htmls, atts = [], [], []
+    _walk(msg.get("payload", {}), texts, htmls, atts)
+    if not atts:
+        raise AccountError("This message has no attachments.")
+    if filename:
+        match = [a for a in atts if a["filename"] == filename] or \
+                [a for a in atts if filename.lower() in a["filename"].lower()]
+        if not match:
+            raise AccountError("No attachment named '%s'. Available: %s"
+                               % (filename, ", ".join(a["filename"] for a in atts)))
+        att = match[0]
+    elif len(atts) == 1:
+        att = atts[0]
+    else:
+        raise AccountError("Several attachments; pass filename. Available: "
+                           + ", ".join(a["filename"] for a in atts))
+    data = att.get("_data")
+    if not data:
+        r = await _call(email, "GET", f"/messages/{message_id}/attachments/{att['attachmentId']}")
+        data = r.get("data", "")
+    raw = base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
+    return {"filename": att["filename"], "mimeType": att["mimeType"], "size": len(raw)}, raw
