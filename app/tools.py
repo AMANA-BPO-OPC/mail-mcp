@@ -168,3 +168,28 @@ async def create_email_draft(
         res = await gmail.send(acc["email"], acc["display_name"], to or [], cc, bcc, subject,
                                body, html_body, draft_only=True, attachments=files)
     return {"draft_in": acc["email"], **res}
+
+
+@mcp.tool()
+async def list_email_drafts(account: str, query: str | None = None, max_results: int = 20) -> dict:
+    """List drafts in a mailbox (draftId, threadId, to, cc, subject, snippet). query uses
+    Gmail search syntax."""
+    acc = _resolve(account)
+    return {"account": acc["email"], "drafts": await gmail.list_drafts(acc["email"], query, max_results)}
+
+
+@mcp.tool()
+async def send_email_draft(account: str, draft_id: str) -> dict:
+    """Send an existing draft exactly as saved (it goes out immediately).
+
+    Only call this after showing the owner the sending account, recipients and full text of
+    that draft, and after the owner has explicitly approved sending it."""
+    acc = _resolve(account)
+    return {"sent_from": acc["email"], **(await gmail.send_draft(acc["email"], draft_id))}
+
+
+@mcp.tool()
+async def delete_email_draft(account: str, draft_id: str) -> dict:
+    """Permanently delete a draft. Only when the owner asked to delete that draft."""
+    acc = _resolve(account)
+    return {"account": acc["email"], **(await gmail.delete_draft(acc["email"], draft_id))}

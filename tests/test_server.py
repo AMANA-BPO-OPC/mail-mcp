@@ -84,6 +84,17 @@ def fake_gmail(request: httpx.Request) -> httpx.Response:
             "payload": {"mimeType": "multipart/mixed", "headers": [{"name": "From", "value": frm}, {"name": "Subject", "value": subj}],
                         "parts": [{"mimeType": mime, "body": {"data": _b64(body)}},
                                   {"mimeType": "application/pdf", "filename": "inv.pdf", "body": {"size": 1234}}]}}]})
+    if path == "/drafts" and request.method == "GET":
+        return httpx.Response(200, json={"drafts": [{"id": "d1"}]})
+    if path.startswith("/drafts/d") and request.method == "GET":
+        return httpx.Response(200, json={"id": "d1", "message": {"id": "x", "threadId": "t1", "snippet": "hello",
+            "payload": {"headers": [{"name": "To", "value": "sup@kr.test"}, {"name": "Subject", "value": "Re: New order"}]}}})
+    if path == "/drafts/send":
+        SENT.append((email, path, json.loads(request.content)["id"]))
+        return httpx.Response(200, json={"id": "sent9", "threadId": "t1"})
+    if path.startswith("/drafts/") and request.method == "DELETE":
+        SENT.append((email, "DELETE", path))
+        return httpx.Response(204)
     if path in ("/messages/send", "/drafts"):
         payload = json.loads(request.content)
         raw = (payload.get("message") or payload)["raw"]
@@ -204,7 +215,7 @@ async def main():
         r = await rpc("tools/list")
         names = sorted(t["name"] for t in r.json()["result"]["tools"])
         print("   tools:", names)
-        check("tools listed", len(names) == 7)
+        check("tools listed", len(names) == 10)
 
         async def call(name, args):
             r = await rpc("tools/call", {"name": name, "arguments": args})
@@ -259,6 +270,12 @@ async def main():
         res, txt = await call("create_email_draft", {"account": "a@wolfpack.test", "body": "x",
             "to": ["z@z.z"], "attachments": [{"url": "http://uc1.dl.dropboxusercontent.com/x", "filename": "x.pdf"}]})
         check("plain-http attachment URL refused", res.get("isError") and len(SENT) == n)
+        res, txt = await call("list_email_drafts", {"account": "a@wolfpack.test"})
+        check("list drafts", "d1" in txt and "Re: New order" in txt)
+        res, txt = await call("send_email_draft", {"account": "a@wolfpack.test", "draft_id": "d1"})
+        check("send draft", SENT[-1][1] == "/drafts/send" and SENT[-1][2] == "d1" and "sent9" in txt)
+        res, txt = await call("delete_email_draft", {"account": "a@wolfpack.test", "draft_id": "d1"})
+        check("delete draft", SENT[-1] == ("a@wolfpack.test", "DELETE", "/drafts/d1") and not res.get("isError"))
 
         res, txt = await call("send_email", {"account": "nobody@x", "to": ["a@b.c"], "subject": "s", "body": "b"})
         check("unknown account error", res.get("isError"))

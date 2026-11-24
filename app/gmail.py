@@ -295,3 +295,29 @@ async def get_attachment(email: str, message_id: str, filename: str | None) -> t
         data = r.get("data", "")
     raw = base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
     return {"filename": att["filename"], "mimeType": att["mimeType"], "size": len(raw)}, raw
+
+
+async def list_drafts(email: str, query: str | None, max_results: int) -> list[dict]:
+    params = {"maxResults": max(1, min(max_results, 50))}
+    if query:
+        params["q"] = query
+    r = await _call(email, "GET", "/drafts", params=params)
+    out = []
+    for d in r.get("drafts", []) or []:
+        m = await _call(email, "GET", f"/drafts/{d['id']}", params={"format": "metadata"})
+        msg = m.get("message", {})
+        hd = _headers(msg.get("payload", {}))
+        out.append({"draftId": d["id"], "threadId": msg.get("threadId"), "to": hd.get("to", ""),
+                    "cc": hd.get("cc", ""), "subject": hd.get("subject", ""),
+                    "snippet": msg.get("snippet", "")})
+    return out
+
+
+async def send_draft(email: str, draft_id: str) -> dict:
+    m = await _call(email, "POST", "/drafts/send", json={"id": draft_id})
+    return {"messageId": m.get("id"), "threadId": m.get("threadId")}
+
+
+async def delete_draft(email: str, draft_id: str) -> dict:
+    await _call(email, "DELETE", f"/drafts/{draft_id}")
+    return {"deleted": draft_id}
