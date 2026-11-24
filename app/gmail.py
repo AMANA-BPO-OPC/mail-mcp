@@ -165,8 +165,42 @@ async def read_thread(email: str, thread_id: str) -> dict:
     return {"threadId": t["id"], "messages": [_summarize(m, full=True) for m in t.get("messages", [])]}
 
 
+ATTACH_HOST_SUFFIXES = (".dropboxusercontent.com", ".dropbox.com")
+MAX_ATTACH_TOTAL = 24 * 1024 * 1024
+
+
+async def fetch_attachments(items) -> list[tuple[str, str, bytes]]:
+    """Download attachments from allow-listed HTTPS hosts (Dropbox temporary links).
+    items: [{"url": ..., "filename": ...}]. Returns [(filename, mime, bytes)]."""
+    import mimetypes
+    from urllib.parse import urlparse
+    out, total = [], 0
+    for it in items or []:
+        url = (it or {}).get("url", "")
+        name = ((it or {}).get("filename") or "").strip().replace("/", "_").replace("\\", "_")
+        u = urlparse(url)
+        host = (u.hostname or "").lower()
+        if u.scheme != "https" or not any(host.endswith(sfx) for sfx in ATTACH_HOST_SUFFIXES):
+            raise AccountError("Attachment URL must be an https Dropbox download link: %s" % host)
+        r = await _http.get(url, follow_redirects=True, timeout=60)
+        if r.status_code != 200:
+            raise AccountError("Could not download attachment '%s' (HTTP %s)" % (name or url, r.status_code))
+        final = (r.url.host or "").lower()
+        if not any(final.endswith(sfx) for sfx in ATTACH_HOST_SUFFIXES):
+            raise AccountError("Attachment redirected off Dropbox: %s" % final)
+        data = r.content
+        total += len(data)
+        if total > MAX_ATTACH_TOTAL:
+            raise AccountError("Attachments exceed 24 MB in total (Gmail limit is 25 MB).")
+        if not name:
+            name = u.path.rsplit("/", 1)[-1] or "attachment"
+        mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        out.append((name, mime, data))
+    return out
+
+
 def _build(email: str, display_name: str, to, cc, bcc, subject, body, html_body,
-           in_reply_to=None, references=None) -> str:
+           in_reply_to=None, references=None, attachments=None) -> str:
     msg = EmailMessage()
     msg["From"] = formataddr((display_name, email)) if display_name else email
     if to:
@@ -183,20 +217,26 @@ def _build(email: str, display_name: str, to, cc, bcc, subject, body, html_body,
     msg.set_content(body or _html_to_text(html_body or ""))
     if html_body:
         msg.add_alternative(html_body, subtype="html")
+    for name, mime, data in attachments or []:
+        maintype, _, subtype = mime.partition("/")
+        msg.add_attachment(data, maintype=maintype, subtype=subtype or "octet-stream", filename=name)
     return base64.urlsafe_b64encode(msg.as_bytes()).decode()
 
 
-async def send(email, display_name, to, cc, bcc, subject, body, html_body, draft_only) -> dict:
-    raw = _build(email, display_name, to, cc, bcc, subject, body, html_body)
+async def send(email, display_name, to, cc, bcc, subject, body, html_body, draft_only,
+               attachments=None) -> dict:
+    raw = _build(email, display_name, to, cc, bcc, subject, body, html_body,
+                 attachments=attachments)
     if draft_only:
         d = await _call(email, "POST", "/drafts", json={"message": {"raw": raw}})
-        return {"draftId": d.get("id"), "messageId": d.get("message", {}).get("id")}
+        return {"draftId": d.get("id"), "messageId": d.get("message", {}).get("id"),
+                "attached": [a[0] for a in attachments or []]}
     m = await _call(email, "POST", "/messages/send", json={"raw": raw})
     return {"messageId": m.get("id"), "threadId": m.get("threadId")}
 
 
 async def reply(email, display_name, message_id, body, html_body, reply_all,
-                extra_cc, draft_only) -> dict:
+                extra_cc, draft_only, attachments=None) -> dict:
     orig = await _call(email, "GET", f"/messages/{message_id}", params=[
         ("format", "metadata"),
         *[("metadataHeaders", n) for n in
@@ -218,11 +258,13 @@ async def reply(email, display_name, message_id, body, html_body, reply_all,
     if not subject.lower().startswith("re:"):
         subject = f"Re: {subject}"
     raw = _build(email, display_name, to, cc, None, subject, body, html_body,
-                 in_reply_to=hd.get("message-id"), references=hd.get("references"))
+                 in_reply_to=hd.get("message-id"), references=hd.get("references"),
+                 attachments=attachments)
     payload = {"raw": raw, "threadId": orig["threadId"]}
     if draft_only:
         d = await _call(email, "POST", "/drafts", json={"message": payload})
-        return {"draftId": d.get("id"), "to": to, "cc": cc, "subject": subject}
+        return {"draftId": d.get("id"), "to": to, "cc": cc, "subject": subject,
+                "attached": [a[0] for a in attachments or []]}
     m = await _call(email, "POST", "/messages/send", json=payload)
     return {"messageId": m.get("id"), "threadId": m.get("threadId"), "to": to, "cc": cc,
             "subject": subject}

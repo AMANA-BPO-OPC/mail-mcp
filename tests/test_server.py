@@ -48,6 +48,8 @@ MAILBOX = {
 
 def fake_gmail(request: httpx.Request) -> httpx.Response:
     url = str(request.url)
+    if request.url.host.endswith("dropboxusercontent.com"):
+        return httpx.Response(200, content=b"%PDF-1.4 fake cr")
     if url.startswith(gmail.TOKEN_URL):
         form = parse_qs(request.content.decode())
         if form["refresh_token"][0] == "revoked":
@@ -244,6 +246,19 @@ async def main():
         res, txt = await call("create_email_draft", {"account": "a@wolfpack.test", "body": "draft",
                                                      "reply_to_message_id": "m1"})
         check("draft created, not sent", SENT[-1][1] == "/drafts")
+        res, txt = await call("create_email_draft", {"account": "a@wolfpack.test", "body": "see attached",
+            "reply_to_message_id": "m1", "attachments": [
+                {"url": "https://uc123.dl.dropboxusercontent.com/cd/0/get/abc", "filename": "CR.pdf"}]})
+        raw = SENT[-1][2]
+        check("draft with Dropbox attachment", SENT[-1][1] == "/drafts" and 'filename="CR.pdf"' in raw
+              and "application/pdf" in raw and "CR.pdf" in txt)
+        n = len(SENT)
+        res, txt = await call("create_email_draft", {"account": "a@wolfpack.test", "body": "x",
+            "to": ["z@z.z"], "attachments": [{"url": "https://evil.test/x.pdf", "filename": "x.pdf"}]})
+        check("non-Dropbox attachment URL refused", res.get("isError") and len(SENT) == n)
+        res, txt = await call("create_email_draft", {"account": "a@wolfpack.test", "body": "x",
+            "to": ["z@z.z"], "attachments": [{"url": "http://uc1.dl.dropboxusercontent.com/x", "filename": "x.pdf"}]})
+        check("plain-http attachment URL refused", res.get("isError") and len(SENT) == n)
 
         res, txt = await call("send_email", {"account": "nobody@x", "to": ["a@b.c"], "subject": "s", "body": "b"})
         check("unknown account error", res.get("isError"))

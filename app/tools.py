@@ -99,15 +99,20 @@ async def send_email(
     cc: list[str] | None = None,
     bcc: list[str] | None = None,
     html_body: str | None = None,
+    attachments: list[dict] | None = None,
 ) -> dict:
     """Send a NEW email from the chosen mailbox (it goes out immediately).
 
     Only call this after showing the owner the sending account, recipients, subject and
     full body, and after the owner has explicitly approved that exact message.
-    body is plain text; html_body is optional rich HTML."""
+    body is plain text; html_body is optional rich HTML.
+    attachments: optional list of {"url": ..., "filename": ...}. url must be an https Dropbox
+    temporary download link (from the Dropbox connector's download_link); the server fetches
+    each file and attaches it. Max 24 MB total."""
     acc = _resolve(account)
+    files = await gmail.fetch_attachments(attachments)
     res = await gmail.send(acc["email"], acc["display_name"], to, cc, bcc, subject, body,
-                           html_body, draft_only=False)
+                           html_body, draft_only=False, attachments=files)
     return {"sent_from": acc["email"], **res}
 
 
@@ -119,15 +124,20 @@ async def reply_to_email(
     reply_all: bool = False,
     cc: list[str] | None = None,
     html_body: str | None = None,
+    attachments: list[dict] | None = None,
 ) -> dict:
     """Reply in-thread to a message, from the mailbox that holds it (it goes out immediately).
 
     message_id comes from search_emails / read_email_thread for that same account.
     Only call this after showing the owner the sending account, recipients and full reply
-    text, and after the owner has explicitly approved it."""
+    text, and after the owner has explicitly approved it.
+    attachments: optional list of {"url": ..., "filename": ...}. url must be an https Dropbox
+    temporary download link (from the Dropbox connector's download_link); the server fetches
+    each file and attaches it. Max 24 MB total."""
     acc = _resolve(account)
+    files = await gmail.fetch_attachments(attachments)
     res = await gmail.reply(acc["email"], acc["display_name"], message_id, body, html_body,
-                            reply_all, cc, draft_only=False)
+                            reply_all, cc, draft_only=False, attachments=files)
     return {"sent_from": acc["email"], **res}
 
 
@@ -142,14 +152,19 @@ async def create_email_draft(
     reply_to_message_id: str | None = None,
     reply_all: bool = False,
     html_body: str | None = None,
+    attachments: list[dict] | None = None,
 ) -> dict:
     """Save a draft (nothing is sent) in the chosen mailbox. To draft a reply, pass
-    reply_to_message_id (recipients and subject are then taken from the original)."""
+    reply_to_message_id (recipients and subject are then taken from the original).
+    attachments: optional list of {"url": ..., "filename": ...}. url must be an https Dropbox
+    temporary download link (from the Dropbox connector's download_link); the server fetches
+    each file and attaches it. Max 24 MB total."""
     acc = _resolve(account)
+    files = await gmail.fetch_attachments(attachments)
     if reply_to_message_id:
         res = await gmail.reply(acc["email"], acc["display_name"], reply_to_message_id, body,
-                                html_body, reply_all, cc, draft_only=True)
+                                html_body, reply_all, cc, draft_only=True, attachments=files)
     else:
         res = await gmail.send(acc["email"], acc["display_name"], to or [], cc, bcc, subject,
-                               body, html_body, draft_only=True)
+                               body, html_body, draft_only=True, attachments=files)
     return {"draft_in": acc["email"], **res}
